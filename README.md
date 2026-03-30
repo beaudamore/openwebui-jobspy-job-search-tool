@@ -1,5 +1,10 @@
 # OpenWebUI JobSpy Job Search Tool
 
+![Python](https://img.shields.io/badge/Python-3.10+-blue?logo=python&logoColor=white)
+![OpenWebUI](https://img.shields.io/badge/Open_WebUI-Tool-green)
+![License](https://img.shields.io/badge/License-MIT-yellow)
+![Job Boards](https://img.shields.io/badge/Job_Boards-8+-orange)
+
 Multi-board job search tool for OpenWebUI that aggregates listings from LinkedIn, Indeed, ZipRecruiter, Glassdoor, Google, and more.
 
 **Version:** 1.0.0  
