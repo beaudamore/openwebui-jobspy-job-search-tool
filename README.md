@@ -25,6 +25,7 @@ Multi-board job search tool for OpenWebUI that aggregates listings from LinkedIn
 
 - **Rich Job Details**: 
   - Job title, company, and location
+  - Glassdoor company ratings, review counts, and profile descriptions for Glassdoor listings
   - Remote status and job type (full-time, part-time, contract, internship)
   - Salary ranges (when available)
   - Posting dates
@@ -80,6 +81,8 @@ pip install python-jobspy pandas
 - **default_results_wanted**: Maximum results per board (default: 10)
 - **default_hours_old**: Maximum age of listings (default: 720 hours/30 days)
 - **enable_debug**: Show search parameters in results
+- **enable_glassdoor_company_enrichment**: Fetch company-profile details for Glassdoor listings (default: `true`)
+- **glassdoor_company_enrichment_limit**: Maximum distinct company profiles to fetch per search (default: `5`)
 
 See [docs/USAGE.md](docs/USAGE.md) for complete configuration options and detailed usage guide.
 

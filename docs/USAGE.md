@@ -159,6 +159,17 @@ Valves allow you to configure default behavior for the job search tool. These se
   - Enable for troubleshooting
   - Disable for cleaner output in production
 
+#### `enable_glassdoor_company_enrichment`
+- **Type**: Boolean
+- **Default**: `true`
+- **Description**: Fetches public company-profile information from the Glassdoor employer URL returned with Glassdoor job listings.
+
+#### `glassdoor_company_enrichment_limit`
+- **Type**: Integer
+- **Default**: `5`
+- **Range**: 1-20
+- **Description**: Maximum number of distinct Glassdoor employer profiles fetched in a single job search.
+
 ---
 
 ## Method: `search_jobs()`

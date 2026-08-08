@@ -11,8 +11,93 @@ Credit: python-jobspy - https://pypi.org/project/python-jobspy/
 
 import asyncio
 import json
+import re
+from html import unescape
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
+
+
+def _has_value(value: Any) -> bool:
+    return value is not None and str(value).lower() != "nan" and str(value) != ""
+
+
+def _extract_glassdoor_company_info(profile_html: str) -> Dict[str, Any]:
+    """Extract publicly embedded company details from a Glassdoor profile page."""
+    for payload in re.findall(
+        r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+        profile_html,
+        flags=re.IGNORECASE | re.DOTALL,
+    ):
+        try:
+            structured_data = json.loads(payload.strip())
+        except json.JSONDecodeError:
+            continue
+
+        candidates = structured_data if isinstance(structured_data, list) else [structured_data]
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            for item in candidate.get("@graph", [candidate]):
+                if not isinstance(item, dict):
+                    continue
+                rating = item.get("aggregateRating") or {}
+                if not any(
+                    _has_value(item.get(field))
+                    for field in ("name", "description", "aggregateRating")
+                ):
+                    continue
+                return {
+                    "rating": rating.get("ratingValue"),
+                    "reviews_count": rating.get("reviewCount"),
+                    "description": re.sub(r"\s+", " ", unescape(item.get("description", ""))).strip(),
+                }
+    return {}
+
+
+def _fetch_glassdoor_company_info(company_url: str) -> Dict[str, Any]:
+    """Fetch a Glassdoor profile without allowing an unavailable profile to fail the search."""
+    import requests
+
+    try:
+        response = requests.get(
+            company_url,
+            headers={"User-Agent": "Mozilla/5.0"},
+            timeout=10,
+        )
+        response.raise_for_status()
+        return _extract_glassdoor_company_info(response.text)
+    except requests.RequestException:
+        return {}
+
+
+def _enrich_with_glassdoor_company_info(jobs_df, company_limit: int):
+    """Add Glassdoor company data to results that already have a Glassdoor profile URL."""
+    enriched_jobs_df = jobs_df.copy()
+    company_urls = []
+    for _, job in enriched_jobs_df.iterrows():
+        company_url = job.get("company_url")
+        if _has_value(company_url) and "glassdoor." in str(company_url).lower():
+            company_url = str(company_url)
+            if company_url not in company_urls:
+                company_urls.append(company_url)
+        if len(company_urls) >= company_limit:
+            break
+
+    company_info_by_url = {
+        company_url: _fetch_glassdoor_company_info(company_url)
+        for company_url in company_urls
+    }
+    for index, job in enriched_jobs_df.iterrows():
+        company_url = str(job.get("company_url"))
+        if company_url in company_info_by_url:
+            enriched_jobs_df.at[index, "glassdoor_company_url"] = company_url
+            company_info = company_info_by_url[company_url]
+            if company_info:
+                enriched_jobs_df.at[index, "glassdoor_company_rating"] = company_info.get("rating")
+                enriched_jobs_df.at[index, "glassdoor_company_reviews_count"] = company_info.get("reviews_count")
+                enriched_jobs_df.at[index, "glassdoor_company_description"] = company_info.get("description")
+
+    return enriched_jobs_df
 
 
 def _format_job_results(jobs_df, search_params: Dict[str, Any]) -> str:
@@ -131,6 +216,20 @@ def _format_job_results(jobs_df, search_params: Dict[str, Any]) -> str:
         site_val = str(job.get('site', 'N/A'))
         output += f"- **Source:** {site_val.replace('_', ' ').title()}\n"
         output += f"- **Date Posted:** {str(job.get('date_posted', 'N/A'))}\n"
+
+        glassdoor_company_url = job.get('glassdoor_company_url')
+        if _has_value(glassdoor_company_url):
+            output += "\n### Glassdoor Company Information\n\n"
+            company_rating = job.get('glassdoor_company_rating')
+            if _has_value(company_rating):
+                output += f"- **Rating:** {company_rating}/5\n"
+            reviews_count = job.get('glassdoor_company_reviews_count')
+            if _has_value(reviews_count):
+                output += f"- **Reviews:** {reviews_count}\n"
+            company_description = job.get('glassdoor_company_description')
+            if _has_value(company_description):
+                output += f"- **About:** {company_description}\n"
+            output += f"- **Profile:** [View on Glassdoor]({glassdoor_company_url})\n"
         
         # Compensation
         if job.get('min_amount') or job.get('max_amount') or job.get('currency'):
@@ -232,7 +331,7 @@ class Tools:
         """Configuration parameters for the job search tool"""
 
         default_sites: str = Field(
-            default="linkedin,indeed,zip_recruiter",
+            default="linkedin,indeed,zip_recruiter,glassdoor",
             description="Comma-separated list of job sites to search. Options: linkedin, indeed, zip_recruiter, glassdoor, google, bayt, naukri, bdjobs",
         )
         default_location: str = Field(
@@ -266,6 +365,16 @@ class Tools:
         enable_debug_output: bool = Field(
             default=True,
             description="Include debug information in responses",
+        )
+        enable_glassdoor_company_enrichment: bool = Field(
+            default=True,
+            description="Fetch public Glassdoor employer-profile details for Glassdoor job results",
+        )
+        glassdoor_company_enrichment_limit: int = Field(
+            default=5,
+            ge=1,
+            le=20,
+            description="Maximum distinct Glassdoor employer profiles fetched per search",
         )
 
     def __init__(self):
@@ -363,6 +472,16 @@ class Tools:
                     verbose=0,  # Suppress jobspy logs
                 ),
             )
+
+            if self.valves.enable_glassdoor_company_enrichment and not jobs_df.empty:
+                await self.emit_status(eventer, "Fetching Glassdoor company information...")
+                jobs_df = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    lambda: _enrich_with_glassdoor_company_info(
+                        jobs_df,
+                        self.valves.glassdoor_company_enrichment_limit,
+                    ),
+                )
 
             await self.emit_status(eventer, "Processing results...")
 
